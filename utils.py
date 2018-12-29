@@ -7,7 +7,7 @@ from PIL import Image
 import numpy as np
 
 
-def show_annotation(img_path, annot_file):
+def show_annotations_file(img_path, annot_file):
     _, filename = os.path.split(img_path)
 
     # Extract annotations
@@ -26,6 +26,16 @@ def show_annotation(img_path, annot_file):
         ax.add_patch(rect)
 
     plt.show()
-    return 0
+    return img, annotations
 
-show_annotation('data\DSCF1015.JPG', 'annotationsTrain.txt')
+def show_annotations(img, annotations):
+    # Plot image
+    fig, ax = plt.subplots(1)
+    ax.imshow(img)
+
+    # Plot rectangles
+    for annot in annotations:
+        rect = patches.Rectangle((annot[0], annot[1]), annot[2], annot[3], linewidth=1, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
+
+    plt.show()

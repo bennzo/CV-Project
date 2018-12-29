@@ -15,31 +15,31 @@ model_urls = {
 
 
 class FeaturePyramidNetwork(nn.Module):
-    def __init__(self, channel_depth, feature_depth=256):
-        # Building the FPN according to: https://arxiv.org/abs/1708.02002
-        # Architecture details on page 4 (including footnotes)
-        # Each c_i corresponds to a feature layer at the output of the ResNet layers
-        # Each p_i corresponds to a feature layer at a different scale at the output of each pyramid layer
-        # Each m_i corresponds to the mid-layer to be upsampled in the top-down path
-        # A nice illustration by @jonathan_hui at https://cdn-images-1.medium.com/max/1600/1*ffxP_rL8-jMvipLhMJrVeA.png
+    # Building the FPN according to: https://arxiv.org/abs/1708.02002
+    # Architecture details on page 4 (including footnotes)
+    # Each c_i corresponds to a feature layer at the output of the ResNet layers
+    # Each p_i corresponds to a feature layer at a different scale at the output of each pyramid layer
+    # Each m_i corresponds to the mid-layer to be upsampled in the top-down path
+    # A nice illustration by @jonathan_hui at https://cdn-images-1.medium.com/max/1600/1*ffxP_rL8-jMvipLhMJrVeA.png
+    def __init__(self, channel_depth, fpn_channels=256):
         super(FeaturePyramidNetwork, self).__init__()
         c3_d, c4_d, c5_d = channel_depth
 
-        self.p6_conv = nn.Conv2d(c5_d, feature_depth, kernel_size=3, stride=2, padding=1)
+        self.p6_conv = nn.Conv2d(c5_d, fpn_channels, kernel_size=3, stride=2, padding=1)
 
         self.p7_activation = nn.ReLU()
-        self.p7_conv = nn.Conv2d(feature_depth, feature_depth, kernel_size=3, stride=2, padding=1)
+        self.p7_conv = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=2, padding=1)
 
-        self.c5_conv1 = nn.Conv2d(c5_d, feature_depth, kernel_size=1, stride=1)
-        self.p5_conv3 = nn.Conv2d(feature_depth, feature_depth, kernel_size=3, stride=1, padding=1)
+        self.c5_conv1 = nn.Conv2d(c5_d, fpn_channels, kernel_size=1, stride=1)
+        self.p5_conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
         self.m5_upsample = nn.Upsample(scale_factor=2, mode='nearest')
 
-        self.c4_conv1 = nn.Conv2d(c4_d, feature_depth, kernel_size=1, stride=1)
-        self.p4_conv3 = nn.Conv2d(feature_depth, feature_depth, kernel_size=3, stride=1)
+        self.c4_conv1 = nn.Conv2d(c4_d, fpn_channels, kernel_size=1, stride=1)
+        self.p4_conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
         self.m4_upsample = nn.Upsample(scale_factor=2, mode='nearest')
 
-        self.c3_conv1 = nn.Conv2d(c3_d, feature_depth, kernel_size=1, stride=1)
-        self.p3_conv3 = nn.Conv2d(feature_depth, feature_depth, kernel_size=3, stride=1)
+        self.c3_conv1 = nn.Conv2d(c3_d, fpn_channels, kernel_size=1, stride=1)
+        self.p3_conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, c3, c4, c5):
         p6 = self.p6_conv(c5)
@@ -59,8 +59,67 @@ class FeaturePyramidNetwork(nn.Module):
         return [p3, p4, p5, p6, p7]
 
 
+class ClassificationSubnet(nn.Module):
+    # Building the Classification subnet according to: https://arxiv.org/abs/1708.02002
+    # Architecture details on page 5
+    def __init__(self, fpn_channels, n_anchors, n_classes):
+        super(ClassificationSubnet, self).__init__()
+        self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.conv4 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.class_conv = nn.Conv2d(fpn_channels, n_anchors * n_classes, kernel_size=3, stride=1, padding=0)
+
+        self.relu = nn.ReLU
+        self.sigmoid = nn.Sigmoid
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.relu(x)
+        x = self.conv3(x)
+        x = self.relu(x)
+        x = self.conv4(x)
+        x = self.relu(x)
+
+        x = self.class_conv(x)
+        output = self.sigmoid(x)
+
+        return output
+
+
+class BoxSubnet(nn.Module):
+    # Building the Box Regression subnet according to: https://arxiv.org/abs/1708.02002
+    # Architecture details on page 5
+    def __init__(self, fpn_channels, n_anchors):
+        super(BoxSubnet, self).__init__()
+        self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.conv4 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
+        self.box_conv = nn.Conv2d(fpn_channels, n_anchors * 4, kernel_size=3, stride=1, padding=0)
+
+        self.relu = nn.ReLU
+        self.sigmoid = nn.Sigmoid
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.relu(x)
+        x = self.conv3(x)
+        x = self.relu(x)
+        x = self.conv4(x)
+        x = self.relu(x)
+
+        output = self.class_conv(x)
+
+        return output
+
+
 class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=7):
+    def __init__(self, n_classes, block, layers):
         # ----------- Initialize ResNet layers ----------- #
         self.inplanes = 64
         super(ResNet, self).__init__()
@@ -85,12 +144,20 @@ class ResNet(nn.Module):
 
         # ----------- Initialize Feature Pyramid Network layers ----------- #
         # Channel depths according to Bottleneck block
-        channel_depth = [self.layer2[-1]['conv3'].out_channels,self.layer3[-1]['conv3'].out_channels,self.layer4[-1]['conv3'].out_channels]
-        self.FPN = FeaturePyramidNetwork(channel_depth)
+        channel_depth = [self.layer2[-1].conv3.out_channels,
+                         self.layer3[-1].conv3.out_channels,
+                         self.layer4[-1].conv3.out_channels]
+        self.fpn_channels = 256
+        self.FPN = FeaturePyramidNetwork(channel_depth, self.fpn_channels)
         # ----------------------------------------------------------------- #
 
         # ----------- Initialize Regression Network ----------- #
+        self.BoxRegression = BoxSubnet(self.fpn_channels, 9)
+        # ----------------------------------------------------- #
+
         # ----------- Initialize Classification Network ----------- #
+        self.BoxClassification = ClassificationSubnet(self.fpn_channels, 9, n_classes)
+        # --------------------------------------------------------- #
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -109,8 +176,8 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
-        x = self.conv1(x)
+    def forward(self, images, annots_gt):
+        x = self.conv1(images)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)

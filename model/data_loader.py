@@ -4,18 +4,18 @@ import ast
 import torch
 import numpy as np
 import pandas as pd
+import cv2
 import random
+
+import utils
 
 from operator import methodcaller
 
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils
-from torch.utils.data.sampler import Sampler
-
-from skimage import io, transform
+from torch.utils.data import Dataset
+from torchvision import transforms
 
 class BusDataset(Dataset):
-    def __init__(self, data_dir, annotations_file, transform=None):
+    def __init__(self, data_dir, annotations_file, num_classes, transform=None):
         # Initializes a basic Bus dataset
         #
         # Args:
@@ -27,7 +27,7 @@ class BusDataset(Dataset):
         super(BusDataset, self).__init__()
         self.files = []
         self.annotations = []
-        self.classes = 7        # 0 is background
+        self.classes = num_classes + 1
         self.transform = transform
 
         with open(annotations_file) as annot_file:
@@ -39,6 +39,8 @@ class BusDataset(Dataset):
                 # Append annotations
                 # Convert classes to one hot vectors
                 annot_np = np.array(ast.literal_eval(annots))
+                if len(annot_np.shape) == 1:
+                    annot_np = annot_np[np.newaxis, :]
                 one_hot_classes = np.zeros((annot_np.shape[0], self.classes))
                 one_hot_classes[range(annot_np.shape[0]), annot_np[:, -1]] = 1
                 self.annotations.append(np.column_stack((annot_np[:,:4], one_hot_classes)))
@@ -58,14 +60,127 @@ class BusDataset(Dataset):
         #   img: (Tensor) Transoformed image in index idx
         #   annot: (Tensor[]) List of annotations of the form [xmin, ymin, width, height, color]
 
-        image = io.imread(self.files[idx]).astype(np.float32) / 255
+        img = cv2.imread(self.files[idx]).astype(np.float32) / 255
         annots = self.annotations[idx]
-        sample = {'image':image, 'annots':annots}
+        sample = {'img':img, 'annots':annots}
 
         if self.transform:
             sample = self.transform(sample)
 
+        return sample['img'], sample['annots']
+
+
+class HorizontalFlip(object):
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, sample):
+        if random.random() < self.p:
+            img, annots = sample.values()
+            H, W, D = img.shape
+
+            img = cv2.flip(img, 1)
+            annots[:, 0] = W - annots[:, 0] - annots[:, 2]
+
+            sample['img'] = img
+            sample['annots'] = annots
+
         return sample
 
+
+class VerticalFlip(object):
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, sample):
+        if random.random() < self.p:
+            img, annots = sample.values()
+            H, W, D = img.shape
+
+            img = cv2.flip(img, 0)
+            annots[:, 1] = H - annots[:, 1] - annots[:, 3]
+
+            sample['img'] = img
+            sample['annots'] = annots
+
+        return sample
+
+
+class Resize(object):
+    def __init__(self, minside=256):
+        self.minside = minside
+
+    def __call__(self, sample):
+        img, annots = sample.values()
+        H, W, D = img.shape
+        scale = self.minside / min(H,W)
+
+        scale_W = (round(scale*W) - round(scale*W)%32) / W
+        scale_H = (round(scale*H) - round(scale*H)%32) / H
+
+        img = cv2.resize(img, None, fx=scale_W, fy=scale_H)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        annots[:, [0, 2]] = (annots[:, [0, 2]] * scale_W).round().astype(int)
+        annots[:, [1, 3]] = (annots[:, [1, 3]] * scale_H).round().astype(int)
+
+        sample['img'] = torch.from_numpy(img).permute(2,0,1)
+        sample['annots'] = torch.from_numpy(annots).type(torch.FloatTensor)
+
+        return sample
+
+
+class Normalize(object):
+    # Normalize according to ResNet if using pretrained weights
+    def __init__(self, mean, std):
+        self.normalize = transforms.Normalize(mean=mean, std=std)
+
+    def __call__(self, sample):
+        sample['img'] = self.normalize(sample['img'])
+        return sample
+
+
+def collate(batch):
+    # A Collater function that enables work with batches that contain
+    # images of different sizes and contains different number of objects
+    #
+    # Args:
+    #     batch: list of (Image, Annotation)
+    # Return:
+    #     padded_batch: list of (Image, Annotation) where all of the images and annotations
+    #                   are of the same shape
+    N = len(batch)
+    _, classes = batch[0][1].shape
+
+    maxH = max(batch, key=lambda sample: sample[0].shape[1])[0].shape[1]
+    maxW = max(batch, key=lambda sample: sample[0].shape[2])[0].shape[2]
+    maxAnnot = max(batch, key=lambda sample: sample[1].shape[0])[1].shape[0]
+
+    padded_images = torch.zeros((N, 3, maxH, maxW))
+    padded_annots = -1*torch.ones((N, maxAnnot, classes))
+
+    for i, (img, annots) in enumerate(batch):
+        D, H, W  = img.shape
+        C, L = annots.shape
+
+        # if H < maxH or W < maxW:
+        padded_images[i, :, :H, :W] = img
+
+        # if C < maxAnnot:
+        padded_annots[i, :C, :L] = annots
+
+    return padded_images, padded_annots
+
+
 if __name__ == '__main__':
-    test = BusDataset('data', '..\\annotationsTrain.txt')
+    # train_data = BusDataset(
+    #     '../data',
+    #     '../annotationsTrain.txt',
+    #     6,
+    #     transforms.Compose([
+    #         VerticalFlip(0),
+    #         HorizontalFlip(0),
+    #         Resize(minside=256),
+    #     ]))
+    # sample = train_data[0]
+    # utils.show_annotations(sample[0].numpy().transpose(1,2,0), sample[1].numpy())
+    pass
