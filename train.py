@@ -42,7 +42,7 @@ def main():
                             transforms.Compose([
                                 VerticalFlip(0.5),
                                 HorizontalFlip(0.5),
-                                Resize(minside=256),
+                                Resize(minside=512),
                                 Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                             ]))
     train_loader = DataLoader(train_data, batch_size=opts.batch_size, collate_fn=collate)

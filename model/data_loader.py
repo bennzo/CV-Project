@@ -37,12 +37,15 @@ class BusDataset(Dataset):
                 self.files.append(os.path.join(data_dir, filename))
 
                 # Append annotations
-                # Convert classes to one hot vectors
                 annot_np = np.array(ast.literal_eval(annots))
                 if len(annot_np.shape) == 1:
                     annot_np = annot_np[np.newaxis, :]
+                # Convert xywh -> xyxy
+                annot_np[:,2:4] += annot_np[:, :2]
+                # Encode one hot embeddings for classification
                 one_hot_classes = np.zeros((annot_np.shape[0], self.classes))
                 one_hot_classes[range(annot_np.shape[0]), annot_np[:, -1]] = 1
+
                 self.annotations.append(np.column_stack((annot_np[:,:4], one_hot_classes)))
 
 
@@ -80,7 +83,8 @@ class HorizontalFlip(object):
             H, W, D = img.shape
 
             img = cv2.flip(img, 1)
-            annots[:, 0] = W - annots[:, 0] - annots[:, 2]
+            # annots[:, 0] = H - annots[:, 0] - annots[:, 2]
+            annots[:, 0], annots[:, 2] = W - annots[:, 2], W - annots[:, 0]
 
             sample['img'] = img
             sample['annots'] = annots
@@ -98,7 +102,8 @@ class VerticalFlip(object):
             H, W, D = img.shape
 
             img = cv2.flip(img, 0)
-            annots[:, 1] = H - annots[:, 1] - annots[:, 3]
+            # annots[:, 1] = H - annots[:, 1] - annots[:, 3]
+            annots[:, 1], annots[:, 3] = H - annots[:, 3], H - annots[:, 1]
 
             sample['img'] = img
             sample['annots'] = annots
@@ -172,15 +177,14 @@ def collate(batch):
 
 
 if __name__ == '__main__':
-    # train_data = BusDataset(
-    #     '../data',
-    #     '../annotationsTrain.txt',
-    #     6,
-    #     transforms.Compose([
-    #         VerticalFlip(0),
-    #         HorizontalFlip(0),
-    #         Resize(minside=256),
-    #     ]))
-    # sample = train_data[0]
-    # utils.show_annotations(sample[0].numpy().transpose(1,2,0), sample[1].numpy())
-    pass
+    train_data = BusDataset(
+        '../data',
+        '../annotationsTrain.txt',
+        6,
+        transforms.Compose([
+            VerticalFlip(0),
+            HorizontalFlip(0),
+            Resize(minside=512),
+        ]))
+    sample = train_data[0]
+    utils.show_annotations(sample[0].numpy().transpose(1,2,0), sample[1].numpy(), format='xyxy')

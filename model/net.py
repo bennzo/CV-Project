@@ -59,11 +59,11 @@ class FeaturePyramidNetwork(nn.Module):
         return [p3, p4, p5, p6, p7]
 
 
-class ClassificationSubnet(nn.Module):
+class ClsSubnet(nn.Module):
     # Building the Classification subnet according to: https://arxiv.org/abs/1708.02002
     # Architecture details on page 5
     def __init__(self, fpn_channels, n_anchors, n_classes):
-        super(ClassificationSubnet, self).__init__()
+        super(ClsSubnet, self).__init__()
         self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
         self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
         self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
@@ -89,11 +89,11 @@ class ClassificationSubnet(nn.Module):
         return output
 
 
-class BoxSubnet(nn.Module):
+class RegSubnet(nn.Module):
     # Building the Box Regression subnet according to: https://arxiv.org/abs/1708.02002
     # Architecture details on page 5
     def __init__(self, fpn_channels, n_anchors):
-        super(BoxSubnet, self).__init__()
+        super(RegSubnet, self).__init__()
         self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
         self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
         self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
@@ -101,7 +101,6 @@ class BoxSubnet(nn.Module):
         self.box_conv = nn.Conv2d(fpn_channels, n_anchors * 4, kernel_size=3, stride=1, padding=0)
 
         self.relu = nn.ReLU
-        self.sigmoid = nn.Sigmoid
 
     def forward(self, x):
         x = self.conv1(x)
@@ -120,6 +119,7 @@ class BoxSubnet(nn.Module):
 
 class ResNet(nn.Module):
     def __init__(self, n_classes, block, layers):
+        self.n_classes = n_classes + 1
         # ----------- Initialize ResNet layers ----------- #
         self.inplanes = 64
         super(ResNet, self).__init__()
@@ -152,11 +152,11 @@ class ResNet(nn.Module):
         # ----------------------------------------------------------------- #
 
         # ----------- Initialize Regression Network ----------- #
-        self.BoxRegression = BoxSubnet(self.fpn_channels, 9)
+        self.BoxReg = RegSubnet(self.fpn_channels, 9)
         # ----------------------------------------------------- #
 
         # ----------- Initialize Classification Network ----------- #
-        self.BoxClassification = ClassificationSubnet(self.fpn_channels, 9, n_classes)
+        self.BoxCls = ClsSubnet(self.fpn_channels, 9, self.n_classes)
         # --------------------------------------------------------- #
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -181,15 +181,18 @@ class ResNet(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
         c2 = self.layer1(x)
         c3 = self.layer2(c2)
         c4 = self.layer3(c3)
         c5 = self.layer4(c4)
 
-        p3, p4, p5, p6, p7 = self.FPN(c3,c4,c5)
+        fmaps = self.FPN(c3, c4, c5)
+        # p3, p4, p5, p6, p7 = self.FPN(c3,c4,c5)
 
-        return x
+        box_preds = [self.BoxReg(fmap).permute(0, 2, 3, 1).contiguous().view(images.size(0), -1, 4) for fmap in fmaps]
+        cls_preds = [self.BoxCls(fmap).permute(0, 2, 3, 1).contiguous().view(images.size(0), -1, self.n_classes) for fmap in fmaps]
+
+        return torch.cat(box_preds, dim = 1), torch.cat(cls_preds, dim = 1)
 
 
 def resnet18(num_classes, pretrained=False, **kwargs):

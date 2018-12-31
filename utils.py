@@ -28,7 +28,10 @@ def show_annotations_file(img_path, annot_file):
     plt.show()
     return img, annotations
 
-def show_annotations(img, annotations):
+def show_annotations(img, annotations, format='xywh'):
+    if format == 'xyxy':
+        annotations[:,2:4] -= annotations[:, :2]
+
     # Plot image
     fig, ax = plt.subplots(1)
     ax.imshow(img)
@@ -39,3 +42,12 @@ def show_annotations(img, annotations):
         ax.add_patch(rect)
 
     plt.show()
+
+
+def xyxy2xywh(boxes):
+    boxes[:, 2:4] -= boxes[:, :2]
+    boxes[:, :2]  += boxes[:, 2:4] * 0.5
+
+def xywh2xyxy(boxes):
+    boxes[:, :2]  -= boxes[:, 2:4] * 0.5
+    boxes[:, 2:4] += boxes[:, :2]
