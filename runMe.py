@@ -2,34 +2,65 @@ import numpy as np
 import ast
 import os
 
+import torch
+from torch.utils.data import DataLoader
+from torchvision import transforms
+
+from model.net import resnet101, resnet50
+from model.data_loader import BusDataset, Resize, Normalize, collate
+
 def run(myAnnFileName, buses):
-	
-    annFileNameGT = os.path.join(os.getcwd(),'annotationsTrain.txt')
-    writtenAnnsLines = {}
     annFileEstimations = open(myAnnFileName, 'w+')
-    annFileGT = open(annFileNameGT, 'r')
-    writtenAnnsLines['Ground_Truth'] = (annFileGT.readlines())
 
-    for k, line_ in enumerate(writtenAnnsLines['Ground_Truth']):
+    # Initialize and load model
+    net = resnet50(6, pretrained=False)
+    net.load_state_dict(torch.load('saved_models/RetinaNet_resnet50_annotationsTrain_45.txt_20.pt'))
+    net = net.cuda()
+    net.eval()
+    net.freeze_bn()
 
-        line = line_.replace(' ','')
-        imName = line.split(':')[0]
-        anns_ = line[line.index(':') + 1:].replace('\n', '')
-        anns = ast.literal_eval(anns_)
-        if (not isinstance(anns, tuple)):
-            anns = [anns]
-        corruptAnn = [np.round(np.array(x) + np.random.randint(low = 0, high = 100, size = 5)) for x in anns]
-        corruptAnn = [x[:4].tolist() + [anns[i][4]] for i,x in enumerate(corruptAnn)]
-        strToWrite = imName + ':'
-        if(3 <= k <= 5):
-            strToWrite += '\n'
-        else:
-            for i, ann in enumerate(corruptAnn):
-                posStr = [str(x) for x in ann]
-                posStr = ','.join(posStr)
-                strToWrite += '[' + posStr + ']'
-                if (i == int(len(anns)) - 1):
-                    strToWrite += '\n'
-                else:
-                    strToWrite += ','
-        annFileEstimations.write(strToWrite)
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
+    # Initialize dataset
+    test_data = BusDataset(buses, 'annotationsVal_45.txt', 6,
+                            transforms.Compose([
+                                Resize(minside=512),
+                                Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                            ]))
+    test_loader = DataLoader(test_data, batch_size=1, shuffle=False, collate_fn=test_data.collate)
+
+    # TEST
+    scale_W = 1/0.18421052631578946
+    scale_H = 1/0.1871345029239766
+
+    for i, (images, gt_annots) in enumerate(test_loader):
+        with torch.no_grad():
+            images = images.cuda()
+            gt_annots = gt_annots.cuda()
+
+            pred_annots = net(images)
+
+            boxes, colors = test_data.anchors.deparameterize(pred_annots, images[0].shape[1:][::-1])
+
+            # Rescale Boxes
+            boxes[:, [0, 2]] = boxes[:, [0, 2]] * scale_W
+            boxes[:, [1, 3]] = boxes[:, [1, 3]] * scale_H
+
+            # Convert to XYWH
+            boxes[:, 2:4] = boxes[:, 2:4] - boxes[:, :2]
+
+            # Restore Compliant Colors
+            colors = colors + 1
+
+            # Stitch annotations
+            annotations = torch.cat([boxes.round().long(), colors.unsqueeze(1)], dim=1).tolist()
+
+            aline = test_data.get_filename(i) + ':' + ','.join(map(str,annotations[::-1])) + '\n'
+            annFileEstimations.write(aline)
+    annFileEstimations.close()
+
+
+if __name__ == '__main__':
+    run('test.txt', 'data')
+
+

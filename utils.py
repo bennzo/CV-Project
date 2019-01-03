@@ -1,5 +1,6 @@
 import os
 import ast
+import random
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -36,11 +37,15 @@ def show_annotations(img, annotations, format='xywh'):
     fig, ax = plt.subplots(1)
     ax.imshow(img)
 
-    # Plot rectangles
-    for annot in annotations:
-        rect = patches.Rectangle((annot[0], annot[1]), annot[2], annot[3], linewidth=1, edgecolor='r', facecolor='none')
-        ax.add_patch(rect)
+    annotations[:, 0] = annotations[:, 0].clip(0, img.shape[1])
+    annotations[:, 1] = annotations[:, 1].clip(0, img.shape[0])
 
+    # Plot rectangles
+    colors = ['green', 'yellow', 'white', 'gray', 'blue', 'red']
+    for annot in annotations:
+        c = colors[int(annot[4:].nonzero()[0])]
+        rect = patches.Rectangle((annot[0], annot[1]), annot[2], annot[3], linewidth=1, edgecolor=c, facecolor='none')
+        ax.add_patch(rect)
     plt.show()
 
 

@@ -1,7 +1,6 @@
 import torch.nn as nn
 import torch
 import math
-import time
 import torch.utils.model_zoo as model_zoo
 
 
@@ -30,15 +29,15 @@ class FeaturePyramidNetwork(nn.Module):
         self.p7_activation = nn.ReLU()
         self.p7_conv = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=2, padding=1)
 
-        self.c5_conv1 = nn.Conv2d(c5_d, fpn_channels, kernel_size=1, stride=1)
+        self.c5_conv1 = nn.Conv2d(c5_d, fpn_channels, kernel_size=1, stride=1, padding=0)
         self.p5_conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
         self.m5_upsample = nn.Upsample(scale_factor=2, mode='nearest')
 
-        self.c4_conv1 = nn.Conv2d(c4_d, fpn_channels, kernel_size=1, stride=1)
+        self.c4_conv1 = nn.Conv2d(c4_d, fpn_channels, kernel_size=1, stride=1, padding=0)
         self.p4_conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
         self.m4_upsample = nn.Upsample(scale_factor=2, mode='nearest')
 
-        self.c3_conv1 = nn.Conv2d(c3_d, fpn_channels, kernel_size=1, stride=1)
+        self.c3_conv1 = nn.Conv2d(c3_d, fpn_channels, kernel_size=1, stride=1, padding=0)
         self.p3_conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, c3, c4, c5):
@@ -64,14 +63,17 @@ class ClsSubnet(nn.Module):
     # Architecture details on page 5
     def __init__(self, fpn_channels, n_anchors, n_classes):
         super(ClsSubnet, self).__init__()
-        self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.conv4 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.class_conv = nn.Conv2d(fpn_channels, n_anchors * n_classes, kernel_size=3, stride=1, padding=0)
+        self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.conv4 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.class_conv = nn.Conv2d(fpn_channels, n_anchors * n_classes, kernel_size=3, stride=1, padding=1)
 
-        self.relu = nn.ReLU
-        self.sigmoid = nn.Sigmoid
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+
+        self.n_anchors = n_anchors
+        self.n_classes = n_classes
 
     def forward(self, x):
         x = self.conv1(x)
@@ -86,6 +88,10 @@ class ClsSubnet(nn.Module):
         x = self.class_conv(x)
         output = self.sigmoid(x)
 
+        output = output.permute(0, 2, 3, 1)
+        output = output.view(output.shape[0], output.shape[1], output.shape[2], self.n_anchors, self.n_classes)
+        output = output.contiguous().view(x.shape[0], -1, self.n_classes)
+
         return output
 
 
@@ -94,13 +100,13 @@ class RegSubnet(nn.Module):
     # Architecture details on page 5
     def __init__(self, fpn_channels, n_anchors):
         super(RegSubnet, self).__init__()
-        self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.conv4 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=0)
-        self.box_conv = nn.Conv2d(fpn_channels, n_anchors * 4, kernel_size=3, stride=1, padding=0)
+        self.conv1 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.conv4 = nn.Conv2d(fpn_channels, fpn_channels, kernel_size=3, stride=1, padding=1)
+        self.box_conv = nn.Conv2d(fpn_channels, n_anchors * 4, kernel_size=3, stride=1, padding=1)
 
-        self.relu = nn.ReLU
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         x = self.conv1(x)
@@ -112,14 +118,14 @@ class RegSubnet(nn.Module):
         x = self.conv4(x)
         x = self.relu(x)
 
-        output = self.class_conv(x)
+        output = self.box_conv(x)
 
         return output
 
 
 class ResNet(nn.Module):
     def __init__(self, n_classes, block, layers):
-        self.n_classes = n_classes + 1
+        self.n_classes = n_classes
         # ----------- Initialize ResNet layers ----------- #
         self.inplanes = 64
         super(ResNet, self).__init__()
@@ -159,6 +165,23 @@ class ResNet(nn.Module):
         self.BoxCls = ClsSubnet(self.fpn_channels, 9, self.n_classes)
         # --------------------------------------------------------- #
 
+        # Initialize model weights
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+        prior = 0.01
+        self.BoxCls.class_conv.weight.data.fill_(0)
+        self.BoxCls.class_conv.bias.data.fill_(-math.log((1.0 - prior) / prior))
+        self.BoxReg.box_conv.weight.data.fill_(0)
+        self.BoxReg.box_conv.bias.data.fill_(0)
+
+        self.freeze_bn()
+
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
@@ -176,7 +199,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, images, annots_gt):
+    def forward(self, images):
         x = self.conv1(images)
         x = self.bn1(x)
         x = self.relu(x)
@@ -187,14 +210,22 @@ class ResNet(nn.Module):
         c5 = self.layer4(c4)
 
         fmaps = self.FPN(c3, c4, c5)
-        # p3, p4, p5, p6, p7 = self.FPN(c3,c4,c5)
 
-        box_preds = [self.BoxReg(fmap).permute(0, 2, 3, 1).contiguous().view(images.size(0), -1, 4) for fmap in fmaps]
-        cls_preds = [self.BoxCls(fmap).permute(0, 2, 3, 1).contiguous().view(images.size(0), -1, self.n_classes) for fmap in fmaps]
+        # (N, C, W, H) -> (N, W*H, C)
+        box_preds = [self.BoxReg(fmap).permute(0, 2, 3, 1).contiguous().view(images.shape[0], -1, 4) for fmap in fmaps]
+
+        cls_preds = [self.BoxCls(fmap) for fmap in fmaps]
 
         return torch.cat(box_preds, dim = 1), torch.cat(cls_preds, dim = 1)
 
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
 
+
+# Reference: https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
 def resnet18(num_classes, pretrained=False, **kwargs):
     """Constructs a ResNet-18 model.
     Args:

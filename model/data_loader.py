@@ -7,12 +7,16 @@ import pandas as pd
 import cv2
 import random
 
-import utils
+import skimage.io
+import skimage.transform
 
 from operator import methodcaller
-
 from torch.utils.data import Dataset
 from torchvision import transforms
+
+from model.boxes import Anchors
+
+import utils
 
 class BusDataset(Dataset):
     def __init__(self, data_dir, annotations_file, num_classes, transform=None):
@@ -27,8 +31,9 @@ class BusDataset(Dataset):
         super(BusDataset, self).__init__()
         self.files = []
         self.annotations = []
-        self.classes = num_classes + 1
+        self.classes = num_classes
         self.transform = transform
+        self.anchors = Anchors()
 
         with open(annotations_file) as annot_file:
             name_annotations = annot_file.readlines()
@@ -42,12 +47,15 @@ class BusDataset(Dataset):
                     annot_np = annot_np[np.newaxis, :]
                 # Convert xywh -> xyxy
                 annot_np[:,2:4] += annot_np[:, :2]
+                annot_np[:, 4] -= 1
+
                 # Encode one hot embeddings for classification
                 one_hot_classes = np.zeros((annot_np.shape[0], self.classes))
                 one_hot_classes[range(annot_np.shape[0]), annot_np[:, -1]] = 1
-
                 self.annotations.append(np.column_stack((annot_np[:,:4], one_hot_classes)))
 
+                ## TEST
+                # self.annotations.append(annot_np)
 
     def __len__(self):
         # Return the size of the dataset
@@ -63,14 +71,45 @@ class BusDataset(Dataset):
         #   img: (Tensor) Transoformed image in index idx
         #   annot: (Tensor[]) List of annotations of the form [xmin, ymin, width, height, color]
 
-        img = cv2.imread(self.files[idx]).astype(np.float32) / 255
-        annots = self.annotations[idx]
+        # img = cv2.imread(self.files[idx]).astype(np.float32) / 255
+        img = skimage.io.imread(self.files[idx]).astype(np.float32) / 255
+        annots = self.annotations[idx].copy()
         sample = {'img':img, 'annots':annots}
 
         if self.transform:
             sample = self.transform(sample)
 
-        return sample['img'], sample['annots']
+        return sample['img'], sample['annots'].cuda()
+
+    def get_filename(self, idx):
+        return os.path.basename(self.files[idx]).upper()
+
+    # TODO: Change back to old collate and move anchor creation to end of pipeline
+    def collate(self, batch):
+        # A Collater function that enables work with batches that contain
+        # images of different sizes and contains different number of objects
+        #
+        # Args:
+        #     batch: list of (Image, Annotation)
+        # Return:
+        #     padded_batch: list of (Image, Annotation) where all of the images and annotations
+        #                   are of the same shape
+        N = len(batch)
+        _, classes = batch[0][1].shape
+
+        maxH = max(batch, key=lambda sample: sample[0].shape[1])[0].shape[1]
+        maxW = max(batch, key=lambda sample: sample[0].shape[2])[0].shape[2]
+
+        padded_images = torch.zeros((N, 3, maxH, maxW))
+        param_annots = []
+
+        for i, (img, annots) in enumerate(batch):
+            D, H, W = img.shape
+            padded_images[i, :, :H, :W] = img
+            param_annots.append(self.anchors.parameterize(annots, (W, H)))
+
+        param_annots = torch.stack(param_annots)
+        return padded_images, param_annots
 
 
 class HorizontalFlip(object):
@@ -82,8 +121,8 @@ class HorizontalFlip(object):
             img, annots = sample.values()
             H, W, D = img.shape
 
+            # TODO: Change to skimage flip
             img = cv2.flip(img, 1)
-            # annots[:, 0] = H - annots[:, 0] - annots[:, 2]
             annots[:, 0], annots[:, 2] = W - annots[:, 2], W - annots[:, 0]
 
             sample['img'] = img
@@ -101,8 +140,8 @@ class VerticalFlip(object):
             img, annots = sample.values()
             H, W, D = img.shape
 
+            # TODO: Change to skimage flip
             img = cv2.flip(img, 0)
-            # annots[:, 1] = H - annots[:, 1] - annots[:, 3]
             annots[:, 1], annots[:, 3] = H - annots[:, 3], H - annots[:, 1]
 
             sample['img'] = img
@@ -117,16 +156,18 @@ class Resize(object):
 
     def __call__(self, sample):
         img, annots = sample.values()
+
         H, W, D = img.shape
         scale = self.minside / min(H,W)
-
         scale_W = (round(scale*W) - round(scale*W)%32) / W
         scale_H = (round(scale*H) - round(scale*H)%32) / H
 
-        img = cv2.resize(img, None, fx=scale_W, fy=scale_H)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        annots[:, [0, 2]] = (annots[:, [0, 2]] * scale_W).round().astype(int)
-        annots[:, [1, 3]] = (annots[:, [1, 3]] * scale_H).round().astype(int)
+        # img = cv2.resize(img, None, fx=scale_W, fy=scale_H)
+        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = skimage.transform.resize(img, (int(round(H * scale_H)), int(round((W * scale_W)))))
+
+        annots[:, [0, 2]] = (annots[:, [0, 2]] * scale_W)
+        annots[:, [1, 3]] = (annots[:, [1, 3]] * scale_H)
 
         sample['img'] = torch.from_numpy(img).permute(2,0,1)
         sample['annots'] = torch.from_numpy(annots).type(torch.FloatTensor)
@@ -161,7 +202,10 @@ def collate(batch):
     maxAnnot = max(batch, key=lambda sample: sample[1].shape[0])[1].shape[0]
 
     padded_images = torch.zeros((N, 3, maxH, maxW))
+    # One hot embedding
     padded_annots = -1*torch.ones((N, maxAnnot, classes))
+
+    param_annots = []
 
     for i, (img, annots) in enumerate(batch):
         D, H, W  = img.shape
@@ -175,7 +219,6 @@ def collate(batch):
 
     return padded_images, padded_annots
 
-
 if __name__ == '__main__':
     train_data = BusDataset(
         '../data',
@@ -186,5 +229,5 @@ if __name__ == '__main__':
             HorizontalFlip(0),
             Resize(minside=512),
         ]))
-    sample = train_data[0]
-    utils.show_annotations(sample[0].numpy().transpose(1,2,0), sample[1].numpy(), format='xyxy')
+    sample_test = train_data[0]
+    utils.show_annotations(sample_test[0].numpy().transpose(1,2,0), sample_test[1].numpy(), format='xyxy')
