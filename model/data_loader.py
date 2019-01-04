@@ -79,7 +79,8 @@ class BusDataset(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        return sample['img'], sample['annots'].cuda(), sample['scales']
+        # return sample['img'], sample['annots'].cuda(), sample['scales']
+        return sample['img'], sample['annots'], sample['scales']
 
     def get_filename(self, idx):
         return os.path.basename(self.files[idx]).upper()
@@ -167,7 +168,7 @@ class Resize(object):
 
         # img = cv2.resize(img, None, fx=scale_W, fy=scale_H)
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = skimage.transform.resize(img, (int(round(H * scale_H)), int(round((W * scale_W)))))
+        img = skimage.transform.resize(img, (int(round(H * scale_H)), int(round((W * scale_W)))), mode = 'constant', anti_aliasing = False)
 
         annots[:, [0, 2]] = (annots[:, [0, 2]] * scale_W)
         annots[:, [1, 3]] = (annots[:, [1, 3]] * scale_H)

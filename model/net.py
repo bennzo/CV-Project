@@ -124,7 +124,7 @@ class RegSubnet(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, n_classes, block, layers):
+    def __init__(self, n_classes, block, layers, pre_retnet=False):
         self.n_classes = n_classes
         # ----------- Initialize ResNet layers ----------- #
         self.inplanes = 64
@@ -137,16 +137,6 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-
-        # Initialize ResNet layer's weights
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-        # ----------------------------------------- #
 
         # ----------- Initialize Feature Pyramid Network layers ----------- #
         # Channel depths according to Bottleneck block
@@ -165,22 +155,23 @@ class ResNet(nn.Module):
         self.BoxCls = ClsSubnet(self.fpn_channels, 9, self.n_classes)
         # --------------------------------------------------------- #
 
-        # Initialize model weights
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+        # ----------- Initialize RetNet layers weights ------------ #
+        if not pre_retnet:
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+                elif isinstance(m, nn.BatchNorm2d):
+                    m.weight.data.fill_(1)
+                    m.bias.data.zero_()
 
-        prior = 0.01
-        self.BoxCls.class_conv.weight.data.fill_(0)
-        self.BoxCls.class_conv.bias.data.fill_(-math.log((1.0 - prior) / prior))
-        self.BoxReg.box_conv.weight.data.fill_(0)
-        self.BoxReg.box_conv.bias.data.fill_(0)
-
+            prior = 0.01
+            self.BoxCls.class_conv.weight.data.fill_(0)
+            self.BoxCls.class_conv.bias.data.fill_(-math.log((1.0 - prior) / prior))
+            self.BoxReg.box_conv.weight.data.fill_(0)
+            self.BoxReg.box_conv.bias.data.fill_(0)
         self.freeze_bn()
+        # ----------------------------------------- #
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
