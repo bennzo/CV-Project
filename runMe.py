@@ -29,22 +29,19 @@ def run(myAnnFileName, buses):
                             ]))
     test_loader = DataLoader(test_data, batch_size=1, shuffle=False, collate_fn=test_data.collate)
 
-    # TEST
-    scale_W = 1/0.18421052631578946
-    scale_H = 1/0.1871345029239766
-
-    for i, (images, gt_annots) in enumerate(test_loader):
+    for i, (images, gt_annots, scales) in enumerate(test_loader):
         with torch.no_grad():
             images = images.cuda()
             gt_annots = gt_annots.cuda()
+            scales = scales.cuda()
 
             pred_annots = net(images)
 
             boxes, colors = test_data.anchors.deparameterize(pred_annots, images[0].shape[1:][::-1])
 
             # Rescale Boxes
-            boxes[:, [0, 2]] = boxes[:, [0, 2]] * scale_W
-            boxes[:, [1, 3]] = boxes[:, [1, 3]] * scale_H
+            boxes[:, [0, 2]] = boxes[:, [0, 2]] * (1/scales[0,0])
+            boxes[:, [1, 3]] = boxes[:, [1, 3]] * (1/scales[0,1])
 
             # Convert to XYWH
             boxes[:, 2:4] = boxes[:, 2:4] - boxes[:, :2]

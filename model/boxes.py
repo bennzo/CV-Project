@@ -93,7 +93,9 @@ class Anchors:
         for i in range(n_fmaps):
             # Create coordinate grid
             # grid = np.array(np.meshgrid(range(cellsCol[i]), range(cellsRow[i]))).T.reshape(-1,2) + 0.5        # shape:(cellW*cellH,2)
-            grid_x, grid_y = torch.meshgrid(torch.Tensor(range(cellsRow[i])), torch.Tensor(range(cellsCol[i])))
+
+            grid_x, grid_y = torch.meshgrid([torch.Tensor(range(cellsRow[i])), torch.Tensor(range(cellsCol[i]))])   # pytorch <= 0.4.1
+            # grid_x, grid_y = torch.meshgrid(torch.Tensor(range(cellsRow[i])), torch.Tensor(range(cellsCol[i])))     # pytorch >= 1.0.0
             grid = torch.cat([grid_x.unsqueeze(2), grid_y.unsqueeze(2)], dim=2).view(-1,2) + 0.5
 
             # Multiply grid by edge lengths
@@ -227,7 +229,8 @@ class Anchors:
         y2 = dets[:, 3]
 
         areas = (x2 - x1 + 1) * (y2 - y1 + 1)
-        order = torch.argsort(scores, descending=True)
+        _, order = torch.sort(scores, descending=True)          # pytorch <= 0.4.1
+        # order = torch.argsort(scores, descending=True)        # pytorch >= 1.0.0
 
         keep = []
         while order.numel() > 0 and len(order.shape) != 0:

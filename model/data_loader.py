@@ -79,7 +79,7 @@ class BusDataset(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        return sample['img'], sample['annots'].cuda()
+        return sample['img'], sample['annots'].cuda(), sample['scales']
 
     def get_filename(self, idx):
         return os.path.basename(self.files[idx]).upper()
@@ -101,15 +101,17 @@ class BusDataset(Dataset):
         maxW = max(batch, key=lambda sample: sample[0].shape[2])[0].shape[2]
 
         padded_images = torch.zeros((N, 3, maxH, maxW))
+        padded_scales = torch.zeros((N,2)).float()
         param_annots = []
 
-        for i, (img, annots) in enumerate(batch):
+        for i, (img, annots, scale) in enumerate(batch):
             D, H, W = img.shape
             padded_images[i, :, :H, :W] = img
             param_annots.append(self.anchors.parameterize(annots, (W, H)))
+            padded_scales[i] = scale
 
         param_annots = torch.stack(param_annots)
-        return padded_images, param_annots
+        return padded_images, param_annots, padded_scales
 
 
 class HorizontalFlip(object):
@@ -123,6 +125,7 @@ class HorizontalFlip(object):
 
             # TODO: Change to skimage flip
             img = cv2.flip(img, 1)
+            # img = img[:, ::-1, :]
             annots[:, 0], annots[:, 2] = W - annots[:, 2], W - annots[:, 0]
 
             sample['img'] = img
@@ -171,6 +174,7 @@ class Resize(object):
 
         sample['img'] = torch.from_numpy(img).permute(2,0,1)
         sample['annots'] = torch.from_numpy(annots).type(torch.FloatTensor)
+        sample['scales'] = torch.FloatTensor([scale_W, scale_H])
 
         return sample
 
