@@ -1,28 +1,31 @@
 import argparse
 import os
+import collections
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torch.optim import Adam, SGD
+from torch.optim import Adam, SGD, lr_scheduler
 from torchvision import transforms
 
 from model.net import resnet101, resnet50, resnet152
 from model.data_loader import BusDataset, HorizontalFlip, VerticalFlip, Resize, Normalize, collate
 from model.loss import  RetinaLoss
 
+import time
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default='data', help='Data directory path')
-    parser.add_argument('--annotations', type=str, default='annotationsTrain_45.txt', help='Annotations text file path')
+    parser.add_argument('--annotations', type=str, default='annotationsTrain.txt', help='Annotations text file path')
 
     parser.add_argument('--checkpointdir', type=str, default='saved_models', help='Directory to save models')
-    parser.add_argument('--name', type=str, default='RetinaNet_long', help='Name of the model')
-    parser.add_argument('--checkpoint', type=int, default='50', help='Number of epochs before saving a model')
+    parser.add_argument('--name', type=str, default='RetinaNet_finall', help='Name of the model')
+    parser.add_argument('--checkpoint', type=int, default='25', help='Number of epochs before saving a model')
     parser.add_argument('--pretrained', action='store_true', help='Continues training on checkpoint-dir/name model')
 
-    parser.add_argument('--resnet', type=int, default=152, help='Depth of the resnet model')
-    parser.add_argument('--epochs', type=int, default=401, help='Number of epochs to train on')
+    parser.add_argument('--resnet', type=int, default=50, help='Depth of the resnet model')
+    parser.add_argument('--epochs', type=int, default=1001, help='Number of epochs to train on')
     parser.add_argument('--lr', type=int, default=0.00001, help='Number of epochs to train on')
     parser.add_argument('--batch_size', type=int, default=4, help='Number of epochs to train on')
 
@@ -43,6 +46,7 @@ def main():
         # torch.set_default_tensor_type('torch.cuda.FloatTensor')
         net.freeze_bn()
 
+
     train_data = BusDataset(opts.data, opts.annotations, 6,
                             transforms.Compose([
                                 VerticalFlip(0.5),
@@ -60,6 +64,7 @@ def main():
         epoch_class_loss = []
         epoch_loc_loss = []
         epoch_val_loss = []
+        epoch_time = time.time()
         for i, (images, gt_annots, scales) in enumerate(train_loader):
             optimizer.zero_grad()
 
@@ -79,9 +84,11 @@ def main():
             del class_loss
             del local_loss
 
+
+        epoch_time = time.time() - epoch_time
         print(
-            'epoch: {} | cls loss: {:1.15f} | loc loss: {:1.15f} | training loss: {:1.5f}'.format(
-                epoch,  np.mean(epoch_class_loss), np.mean(epoch_loc_loss), np.mean(train_loss)))
+            'epoch: {} | time: {:.2f} | cls loss: {:1.15f} | loc loss: {:1.15f} | training loss: {:1.5f}'.format(
+                epoch, epoch_time,  np.mean(epoch_class_loss), np.mean(epoch_loc_loss), np.mean(train_loss)))
 
 
         if epoch % opts.checkpoint == 0:

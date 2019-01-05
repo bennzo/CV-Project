@@ -176,19 +176,39 @@ class Anchors:
         prob, colors = pred_classes[0].max(dim=1)
         obj_idxs = prob > CLASS_THRESH
 
+        if obj_idxs.sum() == 0:
+            return [], []
+
         # Infer bounding boxes
         anchors = torch.Tensor(self.create_anchors(img_shape)).cuda()
         bboxes = torch.zeros(anchors.shape).cuda()
+        ## TODO: add obj_idxs
         bboxes[:, :2] = (pred_offsets[0][:, :2] * anchors[:, 2:]) + anchors[:, :2]
         bboxes[:, 2:4] = torch.exp(pred_offsets[0][:, 2:4]) * anchors[:, 2:]
         utils.xywh2xyxy(bboxes)
 
         candidate_boxes = bboxes[obj_idxs]
         candidate_colors = colors[obj_idxs]
+        candidate_scores = prob[obj_idxs]
 
         keep = self.nms(candidate_boxes, candidate_colors, NMS_THRESH)
+        boxes_keep = candidate_boxes[keep]
+        colors_keep = candidate_colors[keep]
+        scores_keep = candidate_scores[keep]
 
-        return candidate_boxes[keep], candidate_colors[keep]
+        ###### Reduce to max 6 detections #######
+        # final_idxs = []
+        # for i in range(5,-1,-1):
+        #     if i in colors_keep:
+        #         color_i = (colors_keep == i).float()
+        #         color_max = torch.argmax(scores_keep*color_i)
+        #         final_idxs.append(int(color_max))
+        #
+        # boxes_final = boxes_keep[final_idxs]
+        # colors_final = colors_keep[final_idxs]
+        # return boxes_final, colors_final
+
+        return boxes_keep, colors_keep
 
 
     def iou(self, boxes1, boxes2):

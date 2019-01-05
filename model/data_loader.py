@@ -19,7 +19,7 @@ from model.boxes import Anchors
 import utils
 
 class BusDataset(Dataset):
-    def __init__(self, data_dir, annotations_file, num_classes, transform=None):
+    def __init__(self, data_dir, annotations_file, num_classes, transform=None, eval=False):
         # Initializes a basic Bus dataset
         #
         # Args:
@@ -35,27 +35,30 @@ class BusDataset(Dataset):
         self.transform = transform
         self.anchors = Anchors()
 
-        with open(annotations_file) as annot_file:
-            name_annotations = annot_file.readlines()
-            for filename, annots in map(methodcaller("split", ":"), name_annotations):
-                # Append images
-                self.files.append(os.path.join(data_dir, filename))
+        if not eval:
+            with open(annotations_file) as annot_file:
+                name_annotations = annot_file.readlines()
+                for filename, annots in map(methodcaller("split", ":"), name_annotations):
+                    # Append images
+                    self.files.append(os.path.join(data_dir, filename))
 
-                # Append annotations
-                annot_np = np.array(ast.literal_eval(annots))
-                if len(annot_np.shape) == 1:
-                    annot_np = annot_np[np.newaxis, :]
-                # Convert xywh -> xyxy
-                annot_np[:,2:4] += annot_np[:, :2]
-                annot_np[:, 4] -= 1
+                    # Append annotations
+                    annot_np = np.array(ast.literal_eval(annots))
+                    if len(annot_np.shape) == 1:
+                        annot_np = annot_np[np.newaxis, :]
+                    # Convert xywh -> xyxy
+                    annot_np[:,2:4] += annot_np[:, :2]
+                    annot_np[:, 4] -= 1
 
-                # Encode one hot embeddings for classification
-                one_hot_classes = np.zeros((annot_np.shape[0], self.classes))
-                one_hot_classes[range(annot_np.shape[0]), annot_np[:, -1]] = 1
-                self.annotations.append(np.column_stack((annot_np[:,:4], one_hot_classes)))
+                    # Encode one hot embeddings for classification
+                    one_hot_classes = np.zeros((annot_np.shape[0], self.classes))
+                    one_hot_classes[range(annot_np.shape[0]), annot_np[:, -1]] = 1
+                    self.annotations.append(np.column_stack((annot_np[:,:4], one_hot_classes)))
+        else:
+            self.files = [os.path.join(data_dir, im) for im in os.listdir(data_dir)]
+            self.annotations = [np.ones((1,4+self.classes)) for i in range(len(self.files))]
 
-                ## TEST
-                # self.annotations.append(annot_np)
+
 
     def __len__(self):
         # Return the size of the dataset
